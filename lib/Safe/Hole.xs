@@ -42,6 +42,7 @@ PPCODE:
     SV *saved_PL_op_mask;
     MAGIC *magic;
     I32 j,ac;
+    HV *dummy_hv;
 
     ENTER;
 
@@ -72,17 +73,34 @@ PPCODE:
     PL_defstash = (HV*)SvRV(stashref);
     PL_globalstash = GvHV(gv_fetchpv("CORE::GLOBAL::", GV_ADDWARN, SVt_PVHV));
 
+    SAVEGENERICSV(PL_curstash);
+    PL_curstash = (HV *)SvREFCNT_inc_simple(PL_defstash);
+
     /* defstash must itself contain a main:: so we'll add that now	*/
     /* take care with the ref counts (was cause of long standing bug)	*/
     /* XXX I'm still not sure if this is right, GV_ADDWARN should warn!	*/
     gv = gv_fetchpv("main::", GV_ADDWARN, SVt_PVHV);
     sv_free((SV*)GvHV(gv));
     GvHV(gv) = (HV*)SvREFCNT_inc(PL_defstash);
+
+    /* %INC must be clean for use/require in compartment */
+    dummy_hv = save_hash(PL_incgv);
+    GvHV(PL_incgv) = (HV*)SvREFCNT_inc(GvHV(gv_HVadd(gv_fetchpv("INC",GV_ADD,SVt_PVHV))));
+
+    /* Invalidate class and method caches */
+    ++PL_sub_generation;
+    hv_clear(PL_stashcache);
+
     PUSHMARK(SP);
 
-    perl_call_sv(codesv, GIMME);
+    perl_call_sv(codesv, GIMME_V|G_EVAL|G_KEEPERR);
+    sv_free( (SV *) dummy_hv);  /* get rid of what save_hash gave us*/
     SPAGAIN; /* for the PUTBACK added by xsubpp */
     LEAVE;
+
+  /* Invalidate again */
+    ++PL_sub_generation;
+    hv_clear(PL_stashcache);
 
 SV*
 _get_current_opmask()
